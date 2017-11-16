@@ -1,0 +1,28 @@
+# global: actions to take when ALL phones are home/away
+#   home_action: file name of script to execute (located in scripts folder)
+#   away_action: file name of script to execute (located in scripts folder)
+#   push_timeout: seconds before pushing a notification to verify away status
+# phones: one entry per phone
+#   - name:  a name reference for the phone
+#     mac: phone's wifi mac address
+#     api_key: a prowl api key is required to wake the phone's wifi network
+#     home_action: file name of script to execute (located in scripts folder)
+#     away_action: file name of script to execute (located in scripts folder)
+
+global:
+  home_action: all_home.sh
+  away_action: all_away.sh
+  push_timeout: 900
+
+phones:
+  - name: My Phone
+    mac: "00:00:00:00:00:00"
+    api_key: 0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0
+    home_action: me_home.sh
+    away_action: me_away.sh
+  - name: Your Phone
+    mac: "00:00:00:00:00:00"
+    api_key: 0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0
+    home_action: you_home.sh
+    away_action: you_away.sh
+ 
