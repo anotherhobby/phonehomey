@@ -2,4 +2,5 @@
 *_local.yml
 *.sublime*
 .DS_Store
+phonehomey.log
 venv
