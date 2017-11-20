@@ -1,6 +1,8 @@
-install_dependencies:
-	pip install -r requirements.pip --src .
+.PHONY : install clean
 
-clean:
-	rm -rf prowlpy
-	rm -rf *.pyc
+install :
+	python3 -m venv venv
+	venv/bin/pip install -r requirements.pip
+
+clean :
+	rm -rf venv

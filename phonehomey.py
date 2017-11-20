@@ -1,115 +1,322 @@
-
 import itertools
+import logging
 import os
-import requests
+import socket
 import subprocess
+import sys
+import threading
 import time
-import yaml
 from datetime import datetime
-from prowlpy import prowlpy
+import urllib.parse
+
+import netaddr
+import netifaces
+import requests
+import yaml
+import ipaddress
 
 
-def exe_cmd(cmd):
-    ''' A wrapper for calling subprocess in order to get the output back the same way every time '''
+def setup_logger(name, log_level='DEBUG', log_file=False, std_out=False):
+    formatter = logging.Formatter(fmt='%(asctime)s - %(levelname)s - %(message)s')
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+    if std_out:
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(formatter)
+    if log_level == 'DEBUG':
+        if log_file:
+            file_handler.setLevel(logging.DEBUG)
+        if std_out:
+            stream_handler.setLevel(logging.DEBUG)
+    else:
+        if log_file:
+            file_handler.setLevel(logging.INFO)
+        if std_out:
+            stream_handler.setLevel(logging.INFO)
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    if std_out:
+        logger.addHandler(stream_handler)
+    if log_file:
+        logger.addHandler(file_handler)
+    return logger
+
+
+class silentPingThread(threading.Thread):
+    def __init__(self, ipaddress):
+        threading.Thread.__init__(self)
+        self.ipaddress = ipaddress
+    def run(self):
+        subprocess.Popen(
+            ["ping", "-c1", "-t1", str(self.ipaddress)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT)
+
+
+class MobilePhone():
+    phones = []
+    net_info = {}  
+    global_config = {}
+    def __init__(self, phone):
+        MobilePhone.phones.append(self)
+        self.name = phone['name']
+        self.mac = phone['mac']
+        self.api_key = phone['api_key']
+        self.home_action = phone['home_action']
+        self.away_action = phone['away_action']
+        self.push_timeout = phone['push_timeout']
+        self.ipaddress ='0.0.0.0'
+        self.location ='unknown'
+        self.action = True
+        self.last_ping = False
+        self.push_sent = False
+        self.active_time = int(time.time())
+        self.away_time = 0
+        self.push_time = 0
+        self.seen_time = int(time.time())
+    def send_ping(self):
+        ''' ping the phone and see if it's on the LAN '''
+        cmd = 'ping -c 1 -t 1 {}'.format(self.ipaddress)
+        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        p.communicate()
+        if p.returncode == 0:
+            if not self.last_ping:
+                # this is only for debug logging
+                self.active_time = int(time.time())
+                lapse = self.active_time - self.seen_time
+                log.debug('{} came acive after {} seconds'.format(self.name, lapse))
+            self.last_ping = True
+            self.seen_time = int(time.time())
+        else:
+            if self.last_ping:
+                # this is only for debug logging
+                lapse = int(time.time()) - self.active_time
+                log.debug('{} went inacive after {} seconds'.format(self.name, lapse))
+            self.last_ping = False
+        self.update_location()
+    def send_push(self):
+        ''' send a push notification wake up the phone '''
+        api_url = "https://api.prowlapp.com/publicapi/add"
+        request = {
+            'apikey': self.api_key,
+            'application': 'phonehomey',
+            'event': 'wake up call',
+            'description': 'checking for this phone',
+            'priority': -2
+            }
+        headers = {
+            "content-type": "application/x-www-form-urlencoded",
+            "User-Agent": "phonehomey"
+            }
+        data = urllib.parse.urlencode(request)
+        response = requests.post(api_url, headers=headers, data=data)
+        if response.status_code != 200:
+            log.info("failed to post to push api for {}: {}".format(self.name, response))
+        else:
+            log.debug("sent push notification to {}".format(self.name))
+            self.push_time = int(time.time())
+    def update_location(self):
+        ''' based on the current instance attributes, deterine location '''
+        location = self.location
+        if self.last_ping:
+            self.location = 'home'
+            self.push_sent = False
+        elif int(time.time()) - self.seen_time > self.push_timeout:
+            if not self.push_sent:
+                self.send_push()
+                self.push_sent = True
+            elif int(time.time()) - self.push_time > 10:
+                self.location = 'away'
+        if self.location != location:
+            self.action = True
+            log.info('{} swtiched to {}'.format(self.name, self.location))
+
+
+def read_config():
+    ''' read in the yaml formated config file '''
+    if os.path.isfile('config_local.yml'):
+        startup_log.debug('reading config_local.yml')        
+        with open('config_local.yml', 'r') as stream:
+            try:
+                config = yaml.load(stream)[0]
+            except:
+                startup_log.debug('error parsing {}'.format('config_local.yml'))
+                config = None
+            return config
+    elif os.path.isfile('config.yml'):
+        startup_log.debug('reading config.yml')        
+        with open('config.yml', 'r') as stream:
+            try:
+                config = yaml.load(stream)[0]
+            except:
+                startup_log.debug('error parsing {}'.format('config.yml'))
+                config = None
+            return config
+    else:
+        startup_log.debug("can't find config_local.yml or config.yml".format(file))
+        sys.exit()
+
+
+def discover_phone(phone):
+    ''' try to get the phone to show up in the arp table so it can be found by MAC address '''
+    last_ip = phone.ipaddress
+    phone_ip = search_arp(phone)
+    if phone_ip == '0.0.0.0':
+        log.info("looking for {}".format(phone.name))
+        lan = ipaddress.IPv4Network(
+            '{}/{}'.format(MobilePhone.net_info['network'],MobilePhone.net_info['netmask']))
+        # do a ping scan to update the arp table
+        log.debug('running network scan to find {}: {}'.format(phone.name, phone.mac))
+        for address in lan:
+            # threading so it can be easily be throttled at 256 max threads
+            if threading.activeCount() < 256:
+                silentPingThread(address).start()
+        while threading.activeCount() > 1:
+            time.sleep(.1)
+        phone_ip = search_arp(phone)
+    if phone_ip != '0.0.0.0' and phone_ip != last_ip:
+        # the ip address has changed
+        log.info("found {} at {}".format(phone.name, phone_ip))
+        phone.ipaddress = phone_ip
+
+
+def search_arp(phone):
+    ''' search the arp table for a phone '''
+    phone_ip = '0.0.0.0'
+    # read the arp table
+    cmd = 'arp -an | grep -v incomplete'
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = p.communicate()
-    if p.returncode == 0:
-        return {'returncode': p.returncode, 'output': stdout.decode("utf-8")}
-    else:
-        return {'returncode': p.returncode, 'output': stderr.decode("utf-8")}
-
-
-def read_settings():
-    settings = {}
-    if os.path.isfile("settings.yml"):
-        with open("settings.yml", 'r') as stream:
-            try:
-                settings = yaml.load(stream)[0]
-            except e as error:
-                print('Error parsing settings.yml: {}'.format(e))
-            return settings
-    else:
-        print('File settings.yml not found')
-
-
-def wake_up_call(api_key):
-    ''' send a push notification to the prowl API to wake up the phone '''
-    p = prowlpy.Prowl(api_key)
-    try:
-        p.add(
-            application='phonehomey',
-            event='tickle',
-            description="checking for this phone",
-            priority=-2,
-            )
-        print 'Success'
-    except Exception, msg:
-        print msg
-
-
-def locate_ip(mac, ip_address):
-    ''' Get the phone's IP address from arp using its MAC address '''
-    # do an scan to update the arp table
-    exe_cmd("/usr/local/bin/arp-scan -l")
-    # tease the IP address out of the arp table if it's there
-    arp_list = exe_cmd('arp -an | grep -v incomplete')
-    for entry in arp_list['output'].split('\n'):
-        if mac in entry:
+    arp_list = stdout.decode("utf-8")
+    # parse the IP address out of the arp table if it's there
+    for entry in arp_list.split('\n'):
+        if phone.mac.replace(':0',':') in entry:
             ipa = entry.split('(')[1]
-            ip = ipa.split(')')[0]
-            return ip
-    # if the MAC is not found, just return the IP that was passed in
-    return ip_address
+            phone_ip = ipa.split(')')[0]
+    return phone_ip
 
 
-def never_stop_looking(last_known_ip):
-    ''' Infinite loop function that looks for the device in question '''
-    # set up initial vars for the loop
-    active = False
-    phone_ip = last_known_ip
-    last_seen = int(time.time())
-    # commence looping!
-    while True:
-        output = exe_cmd('ping -c 1 -t 1 {}'.format(phone_ip))
-        now = int(time.time())
-        if output['returncode'] == 0:
-            lapse = now - last_seen
-            last_seen = now
-            if not active:
-                print("{} - Active. Seconds inactive: {}".format(time.strftime("%Y-%m-%d %H:%M:%S"), lapse))
-                active = True
+def get_net_info():
+    ''' returns the netmask and ipaddress of the local host as key pairs '''
+    net_info = {}
+    net_info['ipaddress'] = socket.gethostbyname(socket.getfqdn())
+    interfaces = netifaces.interfaces()
+    for interface in interfaces:
+        try:
+            interface_info = netifaces.ifaddresses(interface)[netifaces.AF_INET][0]
+            if interface_info['addr'] == net_info['ipaddress']:
+                net_info['netmask'] = interface_info['netmask']
+                ip = netaddr.IPNetwork('{}/{}'.format(net_info['ipaddress'], net_info['netmask']))
+                net_info['network'] = ip.network
+                log.debug(net_info)
+                return net_info
+                break
+        except:
+            pass
+
+
+def run_action(phone):
+    ''' run actions when a phone changes to/from home/away '''
+    if phone.location == 'home':
+        phone.action = False
+        log.info('run action for {}: {}'.format(phone.name, phone.home_action))
+    elif phone.location == 'away':
+        phone.action = False
+        log.info('run action for {}: {}'.format(phone.name, phone.away_action))
+    # check to see if all phones are now in the same place
+    all_same_location = True
+    for each_phone in MobilePhone.phones:
+        if each_phone.location != phone.location:
+            all_same_location = False
+    if all_same_location:
+        if phone.location == 'home':
+            # all phones are this same location, run script
+            log.info('action for all_home: {}'.format(MobilePhone.global_config['all_home_action']))
+        elif phone.location == 'away':
+            # all phones are this same location, run script
+            log.info('action for all_away: {}'.format(MobilePhone.global_config['all_away_action']))
+
+
+def hunt(phone, discover=True, push=False):
+    ''' hunt for phone using push notification, network scan, and ping '''
+    if push:
+        phone.send_push()
+        time.sleep(2)
+    if discover:
+        discover_phone(phone)
+    phone.send_ping()
+    phone.update_location()
+
+
+def phonehomey(phone):
+    ''' the primary workflow of phonehomey - discover and/or monitor a phone '''
+    if phone.location is 'unknown':
+        # if the phone location is unknown, it needs to be discovered
+        if not phone.push_sent:
+            # a push has not been sent yet, send one and try to discover the phone
+            hunt(phone=phone, push=True)
+            phone.away_time = int(time.time())
+        elif int(time.time()) - phone.away_time > 10:
+            # already sent push, also waited 10 seconds before trying to discover again
+            phone.away_time = int(time.time())
+            hunt(phone=phone)
+    else:
+        # the phone has been discovered, see if it'll ping
+        hunt(phone=phone, discover=False)
+        if phone.last_ping:
+            # the ping returned, sleep for 1 second to throttle ping
             time.sleep(1)
         else:
-            if active:
-                print("{} - Inactive.".format(time.strftime("%Y-%m-%d %H:%M:%S")))
-                active = False
-            time.sleep(1)
-        # if it's been over an hour, the phone may get a new IP address from the router
-        if (now - last_seen) > 3600:
-            phone_ip = locate_ip(macs[0], last_known_ip)
-            if phone_ip != last_known_ip:
-                last_known_ip = phone_ip
-                print("{} moved to: {}".format(macs[0], last_known_ip))
-            else:
-                time.sleep(5)
+            # the ping did not return
+            if int(time.time()) - phone.seen_time > phone.push_timeout:
+                # the push timeout has elapsed since the last ping returned
+                if not phone.push_sent:
+                    # send a push notification to discover the phone since we haven't yet
+                    hunt(phone=phone, push=True)
+                else:
+                    # a push was already sent, now just monitor
+                    if int(time.time()) - phone.away_time > 10:
+                        # every 10 seconds, try to discover the phone
+                        phone.away_time = int(time.time())
+                        hunt(phone=phone)
+    if phone.action:
+        # the phone location changed and triggered an action
+        run_action(phone)
 
 
 def get_this_party_started():
-    ''' Startup function to discover device and kick off the loop '''
-    last_known_ip = "0.0.0.0"
-    print("{} - Started".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-    # need to discover the phone before the script can continue
-    found = False
-    while not found:
-        phone_ip = locate_ip(macs[0], last_known_ip)
-        if phone_ip != last_known_ip:
-            last_known_ip = phone_ip
-            print("Found: {}".format(last_known_ip))
-            found = True
-        else:
-            time.sleep(1)
-    # run the infinite loop looking for the device
-    never_stop_looking(last_known_ip)
+    ''' Startup function to discover devices and kick off the loop '''
+    global startup_log
+    global log
+    if '-v' in sys.argv:
+        verbose = True
+    else:
+        verbose = True
+    verbose = True
+    startup_log = setup_logger(name='startup_log', log_level='DEBUG', std_out=verbose)
+    config = read_config()
+    MobilePhone.global_config = config['global']
+    log = setup_logger(
+        name='log',
+        log_level=config['global']['log_level'],
+        log_file=config['global']['log_file'],
+        std_out=True)
+    if verbose:
+        log.debug('phonehomey is running in verbose mode')
+    log.info('phonehomey started up')
+    log.debug('config: {}'.format(config))
+    # discover and store network information
+    MobilePhone.net_info = get_net_info()
+    log.debug('net info: {}'.format(MobilePhone.net_info))
+    # create a MobilePhone instance of each phone in the config
+    for phone in config['phones']:
+        MobilePhone(phone)
+    # infinite phonehomey loop!
+    while True:
+        for phone in MobilePhone.phones:
+            # run phonehomey on each phone in the config file
+            phonehomey(phone)
 
 
 if __name__ == '__main__':
