@@ -1,1 +1,5 @@
--e git://github.com/jacobb/prowlpy.git#egg=prowlpy
+requests
+netifaces
+ipaddress
+pyyaml
+netaddr
