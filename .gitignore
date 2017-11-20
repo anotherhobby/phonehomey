@@ -1,5 +1,5 @@
-prowlpy
 *.pyc
-scan_data.txt
+*_local.yml
+*.sublime*
 .DS_Store
-settings_local.yml
+venv
