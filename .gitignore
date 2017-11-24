@@ -1,5 +1,5 @@
 *.pyc
-*_local.yml
+*_local*
 *.sublime*
 .DS_Store
 phonehomey.log
