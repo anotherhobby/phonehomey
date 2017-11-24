@@ -23,9 +23,9 @@ def main(phone, all_phones):
 		log.debug('run code for {} at location: {}'.format(phone.name, phone.location))
 		# for further exploration, this is the full list of phone properties (look at output in debug mode)
 		log.debug('phone properties: {}'.format(phone.__dict__))
-	else if phone.location == 'home':
+	elif phone.location == 'home':
 		log.debug('run code for all phones being home')
-	else if phone.location == 'away':
+	elif phone.location == 'away':
 		log.debug('run code for all phones being away')
 
 
