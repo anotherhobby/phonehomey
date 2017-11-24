@@ -13,7 +13,7 @@ import urllib.parse
 from datetime import datetime
 # pip installs
 import netaddr
-import netifacese
+import netifaces
 import requests
 import yaml
 import ipaddress
@@ -75,7 +75,7 @@ class MobilePhone():
         self.home_action = phone['home_action']
         self.away_action = phone['away_action']
         self.push_timeout = phone['push_timeout']
-        self.platform = phone['platform']
+        self.push_api = phone['push_api']
         self.ipaddress = '0.0.0.0'
         self.location = 'unknown'
         self.action = False
