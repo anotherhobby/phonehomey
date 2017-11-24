@@ -1,33 +1,45 @@
 ---
+# This is the phonehomey config file. You can keep it named config.yml or you can copy it config_local.yml instead.
+# phonehomey will try to import config_local.yml first, and if it's not there it'll import config.yml. This main reason
+# this convention is used because *_local* is in the .gitignore file.
+#
+# Note that all actions can be the same python file, or you can have different file per action. The phone info is passed
+# in when it's executed, so it's easy to tell what event called the script.
+#
 # - global: 
-#     all_home_action: filename of script to execute when ALL phones are home
-#     all_away_action: filename of script to execute when ALL phones are away
+#     all_home_action: filename of python file to execute when ALL phones are home
+#     all_away_action: filename of python file to execute when ALL phones are away
 #     log_level: set to DEBUG or INFO
 #     log_file: path to log file
+#     your_own_var: you can set your own vars for consumption in your scripts, see run_action.py
 #   phones: one entry per phone
 #     - name:  a name reference for the phone
 #       mac: phone's wifi mac address
+#       push_api:  name of api service for push notifications (only prowlapp is currently supported)
 #       push_timeout: seconds until a push will be sent to determine if a phone is away
 #       api_key: a prowl api key is required to wake the phone's wifi network
-#       home_action: file name of script to execute (located in scripts folder)
-#       away_action: file name of script to execute (located in scripts folder)
+#       home_action: file name of python file to execute (located in scripts folder)
+#       away_action: file name of python file to execute (located in scripts folder)
+
 - global:
-    all_home_action: all_home.sh
-    all_away_action: all_away.sh
+    all_home_action: run_action.py
+    all_away_action: run_action.py
     log_level: INFO
     log_file: phonehomey.log
 
   phones:
     - name: My Phone
+      push_api: prowlapp
       mac: "00:00:00:00:00:00"
       api_key: 0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0
       push_timeout: 900
-      home_action: me_home.sh
-      away_action: me_away.sh
+      home_action: run_action.py
+      away_action: run_action.py
     - name: Your Phone
+      push_api: prowlapp
       mac: "00:00:00:00:00:00"
       api_key: 0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0
       push_timeout: 900
-      home_action: you_home.sh
-      away_action: you_away.sh
+      home_action: run_action.py
+      away_action: run_action.py
    
