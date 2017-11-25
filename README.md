@@ -6,9 +6,7 @@ phonehomey is a Python 3 project that will track if you are at home or away, and
 
 # Setup
 
-1. Download all Python 3 required libraries and install them into a venv folder. To do this, just `cd` into this directory and type:
-
-`make`
+1. Download all Python 3 required libraries and install them into a venv folder. To do this, just `cd` into this directory and type: `make`
 
 2. Open the `config.yml` file and read the comments at the top for info regarding how to use the config file. You will need your iPhone's wifi MAC address, and a [prowlapp](https://www.prowlapp.com/) API key. Note that you can copy `config.yml` to `config_local.yml` if you wish. phonehomey will look for `config_local.yml` first. Note that `*_local*` is in the `.gitignore` file to prevent accidental commits with personal info.
 
@@ -27,7 +25,7 @@ Verbose mode outputs all debug to standard out (in addition to the log file if D
 * Python 3
 * Mac OS X or linux
 * [prowlapp](https://www.prowlapp.com/) $3 on iOS
-* iOS only until a push notification api/app is added for android
+* iOS only until code for a push notification api/app is added for android
 
 # Limitations
 
